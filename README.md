@@ -24,6 +24,10 @@ Docs on [godoc.org][godoc]
 +-----+ +-----+ +-----+     +-----+
 </pre>
 
+## Requirements
+
+* Go 1.7 (using request's context)
+
 ## Motivation
 
 * Needed requests to be cached
