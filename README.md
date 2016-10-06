@@ -1,6 +1,9 @@
 # forwardcache
 
-[![Build Status](https://travis-ci.org/mikegleasonjr/forwardcache.svg?branch=master)](https://travis-ci.org/mikegleasonjr/forwardcache) [![GoDoc](http://godoc.org/github.com/mikegleasonjr/forwardcache?status.svg)](http://godoc.org/github.com/mikegleasonjr/forwardcache)
+[![Build Status](https://travis-ci.org/mikegleasonjr/forwardcache.svg?branch=master)](https://travis-ci.org/mikegleasonjr/forwardcache)
+[![Coverage Status](https://codecov.io/gh/mikegleasonjr/forwardcache/branch/master/graph/badge.svg)](https://codecov.io/gh/mikegleasonjr/forwardcache)
+[![GitHub license](https://img.shields.io/badge/license-Apache%202-blue.svg)](https://raw.githubusercontent.com/mikegleasonjr/forwardcache/master/LICENSE)
+[![GoDoc](http://godoc.org/github.com/mikegleasonjr/forwardcache?status.svg)](http://godoc.org/github.com/mikegleasonjr/forwardcache)
 
 A distributed forward caching proxy for Go's http.Client using [httpcache][httpcache] and heavily inspired by [groupcache][groupcache]. Backed by a lot of existing cache [backends][backends] thanks to httpcache. A per host LRU algorithm is provided to optionally front any existing cache. Like groupcache, forwardcache "is a client library as well as a server. It connects to its own peers."
 
