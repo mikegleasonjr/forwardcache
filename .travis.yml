@@ -7,11 +7,10 @@ matrix:
     - go: tip
   fast_finish: true
 before_install:
-  - go get golang.org/x/tools/cmd/vet
   - go get github.com/modocache/gover
   - go get github.com/mikegleasonjr/forwardcache
 script:
-  - go vet github.com/mikegleasonjr/forwardcache
+  - go tool vet .
   - go test -v -race ./...
   - go list -f '{{if len .TestGoFiles}}"go test -coverprofile={{.Dir}}/.coverprofile {{.ImportPath}}"{{end}}' ./... | xargs -i sh -c {}
   - gover . coverage.txt
