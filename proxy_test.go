@@ -66,6 +66,7 @@ func BenchmarkProxy(b *testing.B) {
 
 	cache := httpcache.NewMemoryCache()
 	handler := newProxy("/proxy", cache)
+	discard := discarder{}
 	req, err := http.NewRequest("GET", "/proxy?q="+url.QueryEscape(origin.URL+"/jquery-3.1.1.js"), nil)
 
 	if err != nil {
@@ -74,14 +75,14 @@ func BenchmarkProxy(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		handler.ServeHTTP(discard{}, req)
+		handler.ServeHTTP(discard, req)
 	}
 }
 
-type discard struct{}
+type discarder struct{}
 
 var header = make(map[string][]string)
 
-func (discard) Header() http.Header         { return header }
-func (discard) Write(b []byte) (int, error) { return len(b), nil }
-func (discard) WriteHeader(int)             {}
+func (discarder) Header() http.Header         { return header }
+func (discarder) Write(b []byte) (int, error) { return len(b), nil }
+func (discarder) WriteHeader(int)             {}

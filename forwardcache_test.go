@@ -24,111 +24,76 @@ import (
 	"testing"
 
 	"github.com/gregjones/httpcache"
-	"github.com/mikegleasonjr/forwardcache/lru"
 )
 
 var origin *httptest.Server
+var localProxy *httptest.Server
+var peerProxy *httptest.Server
+var pool *Pool
 
 func TestMain(m *testing.M) {
-	origin = httptest.NewServer(http.FileServer(http.Dir("./test")))
+	setup()
 	status := m.Run()
-	origin.Close()
+	teardown()
 	os.Exit(status)
 }
 
 func TestPool(t *testing.T) {
-	cache := httpcache.NewMemoryCache()
-
-	myself := httptest.NewServer(nil)
-	peer := httptest.NewServer(nil)
-	defer myself.Close()
-	defer peer.Close()
-
-	pool := NewPoolOpts(myself.URL, cache, &PoolOptions{
-		Path:     "/fwp",
-		Replicas: 100,
-		HashFn:   crc32.ChecksumIEEE,
-	})
-	pool.Set(myself.URL, peer.URL)
-
-	peerProxy := newProxy("/fwp", cache)
-	myself.Config.Handler = pool.LocalProxy()
-	peer.Config.Handler = peerProxy
-
-	mySpy := &recorder{RoundTripper: pool.local.Transport}
-	pool.local.Transport = mySpy
-	peerSpy := &recorder{RoundTripper: peerProxy.Transport}
-	peerProxy.Transport = peerSpy
-
-	c := pool.Client()
-
 	tests := []struct {
 		origin string
+		status int
 		cached bool
 	}{
-		{origin.URL + "/jquery-3.1.1.js", false},
-		{origin.URL + "/jquery-3.1.1.js?x=1", false},
-		{origin.URL + "/jquery-3.1.1.js?x=2", false},
-		{origin.URL + "/jquery-3.1.1.js?x=3", false},
-		{origin.URL + "/jquery-3.1.1.js?x=4", false},
-		{origin.URL + "/jquery-3.1.1.js?x=5", false},
-		{origin.URL + "/small.js", false},
-		{origin.URL + "/small.js?y=1", false},
-		{origin.URL + "/small.js?y=2", false},
-		{origin.URL + "/small.js?y=3", false},
-		{origin.URL + "/small.js?y=4", false},
-		{origin.URL + "/small.js?y=5", false},
-		{origin.URL + "/jquery-3.1.1.js", true},
-		{origin.URL + "/jquery-3.1.1.js?x=1", true},
-		{origin.URL + "/jquery-3.1.1.js?x=2", true},
-		{origin.URL + "/jquery-3.1.1.js?x=3", true},
-		{origin.URL + "/jquery-3.1.1.js?x=4", true},
-		{origin.URL + "/jquery-3.1.1.js?x=5", true},
-		{origin.URL + "/small.js", true},
-		{origin.URL + "/small.js?y=1", true},
-		{origin.URL + "/small.js?y=2", true},
-		{origin.URL + "/small.js?y=3", true},
-		{origin.URL + "/small.js?y=4", true},
-		{origin.URL + "/small.js?y=5", true},
-		{origin.URL + "/no-found", false},
-		{origin.URL + "/no-found", false},
+		{origin.URL + "/jquery-3.1.1.js?buster=123", http.StatusOK, false},
+		{origin.URL + "/jquery-3.1.1.js?buster=123", http.StatusOK, true},
+		{origin.URL + "/no-found", http.StatusNotFound, false},
+		{origin.URL + "/no-found", http.StatusNotFound, false},
 	}
 
 	for _, test := range tests {
-		target := pool.peers.Get(test.origin)
-		res, _ := c.Get(test.origin)
+		res, _ := pool.Client().Get(test.origin)
 		res.Body.Close()
-
-		if target == myself.URL && !mySpy.called {
-			t.Errorf("unexpected proxy handling %s: got %s, want %s", test.origin, peer.URL, myself.URL)
-		}
-
-		if target == peer.URL && !peerSpy.called {
-			t.Errorf("unexpected proxy handling %s: got %s, want %s", test.origin, myself.URL, peer.URL)
-		}
 
 		cached := res.Header.Get("X-From-Cache") == "1"
 		if cached != test.cached {
 			t.Errorf("expected a different cache hit for %s: got %t, want %t", test.origin, cached, test.cached)
 		}
 
-		mySpy.reset()
-		peerSpy.reset()
+		if res.StatusCode != test.status {
+			t.Errorf("unexpected status code for %s: got %d, want %d", test.origin, res.StatusCode, test.status)
+		}
 	}
 }
 
-func ExamplePool() {
-	cache := httpcache.Cache(httpcache.NewMemoryCache())
-	cache = lru.New(cache, 32<<20)
+func TestPoolHeaders(t *testing.T) {
+	var got string
+	want := "ForwardCacheBot/1.0"
 
-	pool := NewPool("http://10.0.1.1", cache)
-	pool.Set("http://10.0.1.1", "http://10.0.1.2", "http://10.0.1.3")
+	proxied := origin.Config.Handler
+	origin.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		got = req.UserAgent()
+		proxied.ServeHTTP(w, req)
+	})
+
+	req, _ := http.NewRequest("GET", origin.URL+"/small.js", nil)
+	req.Header.Add("User-Agent", want)
+	pool.Client().Do(req)
+
+	if got != want {
+		t.Errorf("invalid header sent to origin: got 'User-Agent: %s', want 'User-Agent: %s'", got, want)
+	}
+
+	origin.Config.Handler = proxied
+}
+
+func ExampleNewPool() {
+	pool := NewPool("http://10.0.1.1:3000", httpcache.NewMemoryCache())
+	pool.Set("http://10.0.1.1:3000", "http://10.0.1.2:3000", "http://10.0.1.3:3000")
 
 	// -then-
 
 	http.DefaultTransport = pool
-	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js") // uses the pool
-	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js") // gets cached version (if cacheable)
+	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
 
 	// -or-
 
@@ -142,19 +107,46 @@ func ExamplePool() {
 
 	// ...
 
-	http.DefaultServeMux.Handle("/proxy", pool.LocalProxy())
+	http.ListenAndServe(":3000", pool.LocalProxy())
 }
 
-type recorder struct {
-	http.RoundTripper
-	called bool
+func ExampleNewClient() {
+	pool := NewClient("http://10.0.1.1:3000", "http://10.0.1.2:3000", "http://10.0.1.3:3000")
+
+	// -then-
+
+	http.DefaultTransport = pool
+	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+
+	// -or-
+
+	http.DefaultClient = pool.Client()
+	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+
+	// -or-
+
+	c := pool.Client()
+	c.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
 }
 
-func (r *recorder) reset() {
-	r.called = false
+func setup() {
+	// create an origin server and a pool with 2 members
+	origin = httptest.NewServer(http.FileServer(http.Dir("./test")))
+	cache := httpcache.NewMemoryCache()
+	localProxy = httptest.NewServer(nil)
+	peerProxy = httptest.NewServer(nil)
+	pool = NewPoolOpts(localProxy.URL, cache, &ClientOptions{
+		Path:     "/fwp",
+		Replicas: 100,
+		HashFn:   crc32.ChecksumIEEE,
+	})
+	pool.Set(localProxy.URL, peerProxy.URL)
+	localProxy.Config.Handler = pool.LocalProxy()
+	peerProxy.Config.Handler = newProxy("/fwp", cache)
 }
 
-func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
-	r.called = true
-	return r.RoundTripper.RoundTrip(req)
+func teardown() {
+	origin.Close()
+	localProxy.Close()
+	peerProxy.Close()
 }

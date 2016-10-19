@@ -52,18 +52,56 @@ func init() {
 	original = http.DefaultTransport
 }
 
-// Pool represents all caching proxies spread over 1 or more machines.
+// Pool represents all caching proxies spread over 1 or more machines. It
+// also acts as a participating peer.
 type Pool struct {
-	local *proxy
+	*PoolClient
 	self  string
-	opts  PoolOptions
+	local *proxy
+}
+
+// NewPool creates a Pool and registers itself using the specified cache.
+// The returned *Pool implements http.Handler and must be registered
+// manually using http.Handle to serve the local proxy. See LocalProxy()
+func NewPool(self string, local httpcache.Cache) *Pool {
+	p := &Pool{
+		self:       self,
+		local:      newProxy(defaultPath, local),
+		PoolClient: NewClient(),
+	}
+	return p
+}
+
+// NewPoolOpts initializes a pool of peers with the given options.
+func NewPoolOpts(self string, local httpcache.Cache, opts *ClientOptions) *Pool {
+	p := &Pool{
+		self:       self,
+		local:      newProxy(defaultPath, local),
+		PoolClient: NewClientOpts(opts),
+	}
+	if opts.Path != "" {
+		p.local.path = opts.Path
+	}
+	return p
+}
+
+// LocalProxy returns an http.Handler to be registered using http.Handle
+// for the local proxy to serve requests.
+func (p *Pool) LocalProxy() http.Handler {
+	return p.local
+}
+
+// PoolClient represents a nonparticipating client in the pool. It can
+// issue requests to the pool but not proxy requests for others.
+type PoolClient struct {
+	opts  ClientOptions
 	mu    sync.RWMutex // guards peers
 	peers *consistenthash.Map
 }
 
-// PoolOptions are the configurations of a Pool. Options must be
+// ClientOptions are the configurations of a PoolClient. Options must be
 // the same on all machines to ensure consistent hashing among peers.
-type PoolOptions struct {
+type ClientOptions struct {
 	// Path specifies the HTTP path that will serve proxy requests.
 	// If blank, it defaults to "/proxy".
 	Path string
@@ -77,79 +115,67 @@ type PoolOptions struct {
 	HashFn consistenthash.Hash
 }
 
-// NewPool creates a Pool and registers itself using the specified cache.
-// The returned *Pool implements http.Handler and must be registered
-// manually using http.Handle to serve the local proxy. See LocalProxy()
-func NewPool(self string, local httpcache.Cache) *Pool {
-	return &Pool{
-		self:  self,
-		local: newProxy(defaultPath, local),
-		opts: PoolOptions{
+// NewClient creates a PoolClient.
+func NewClient(peers ...string) *PoolClient {
+	c := &PoolClient{
+		opts: ClientOptions{
 			Path:     defaultPath,
 			Replicas: defaultReplicas,
 		},
 	}
+	if len(peers) > 0 {
+		c.Set(peers...)
+	}
+	return c
 }
 
-// NewPoolOpts initializes a pool of peers with the given options.
-func NewPoolOpts(self string, local httpcache.Cache, opts *PoolOptions) *Pool {
-	p := NewPool(self, local)
+// NewClientOpts initializes a PoolClient with the given options.
+func NewClientOpts(opts *ClientOptions, peers ...string) *PoolClient {
+	c := NewClient(peers...)
 	if opts.HashFn != nil {
-		p.opts.HashFn = opts.HashFn
+		c.opts.HashFn = opts.HashFn
 	}
 	if opts.Path != "" {
-		p.opts.Path = opts.Path
+		c.opts.Path = opts.Path
 	}
 	if opts.Replicas != 0 {
-		p.opts.Replicas = opts.Replicas
+		c.opts.Replicas = opts.Replicas
 	}
-	p.local.path = p.opts.Path
-	return p
+	return c
 }
 
 // Set updates the pool's list of peers. Each peer value should
 // be a valid base URL, for example "http://example.net:8000".
-// The set of peers also must contain the local peer.
-func (p *Pool) Set(peers ...string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func (c *PoolClient) Set(peers ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	p.peers = consistenthash.New(p.opts.Replicas, p.opts.HashFn)
-	p.peers.Add(peers...)
+	c.peers = consistenthash.New(c.opts.Replicas, c.opts.HashFn)
+	c.peers.Add(peers...)
 }
 
 // Client returns an http.Client that uses the pool as its transport.
-func (p *Pool) Client() *http.Client {
-	c := new(http.Client)
-	*c = *http.DefaultClient
-	c.Transport = p
-	return c
+func (c *PoolClient) Client() *http.Client {
+	cl := new(http.Client)
+	*cl = *http.DefaultClient
+	cl.Transport = c
+	return cl
 }
 
 // RoundTrip makes the request go through one of the proxy. If the local
-// proxy is targetted, it uses the local transport directly. Since Pool
+// proxy is targetted, it uses the local transport directly. Since PoolClient
 // implements the Roundtripper interface, it can be used as a transport.
-func (p *Pool) RoundTrip(req *http.Request) (*http.Response, error) {
-	p.mu.RLock()
-	peer := p.peers.Get(req.URL.String())
-	p.mu.RUnlock()
-
-	if peer == p.self {
-		return p.local.Transport.RoundTrip(req)
-	}
+func (c *PoolClient) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.mu.RLock()
+	peer := c.peers.Get(req.URL.String())
+	c.mu.RUnlock()
 
 	cpy := clone(req) // per RoundTripper contract
-	query := proxyHandlerURL(peer, p.opts.Path, cpy.URL.String())
+	query := proxyHandlerURL(peer, c.opts.Path, cpy.URL.String())
 	cpy.URL = query
 	cpy.Host = query.Host
 
 	return original.RoundTrip(cpy)
-}
-
-// LocalProxy returns an http.Handler to be registered using http.Handle
-// for the local proxy to serve requests for the other peers.
-func (p *Pool) LocalProxy() http.Handler {
-	return p.local
 }
 
 // builds the url that handles proxy requests on the selected peer
