@@ -35,6 +35,10 @@ Docs on [godoc.org][godoc]
 
 * Needed requests to be cached
 * Needed bandwidth to be spread among N peers
+* Needed to cache HTTPS requests
+* Needed a lightweight infrastructure
+
+So I couldn't go with existing solutions like Apache Traffic Server or Squid.
 
 ## Process
 
@@ -47,17 +51,13 @@ When making a request through the pool...
 ## Example
 
 ```go
-cache := httpcache.Cache(httpcache.NewMemoryCache())
-cache = lru.New(cache, 32<<20)
-
-pool := forwardcache.NewPool("http://10.0.1.1", cache)
-pool.Set("http://10.0.1.1", "http://10.0.1.2", "http://10.0.1.3")
+pool := NewPool("http://10.0.1.1:3000", httpcache.NewMemoryCache())
+pool.Set("http://10.0.1.1:3000", "http://10.0.1.2:3000", "http://10.0.1.3:3000")
 
 // -then-
 
 http.DefaultTransport = pool
-http.Get("https://ajax.g[...]js/1.5.7/angular.min.js") // uses the pool
-http.Get("https://ajax.g[...]js/1.5.7/angular.min.js") // gets cached version (if cacheable)
+http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
 
 // -or-
 
@@ -73,11 +73,6 @@ c.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
 
 http.ListenAndServe(":3000", pool.LocalProxy())
 ```
-
-## Todo
-
-* Use [x/sync/singleflight][singleflight] to avoid simultaneous queries to origins
-* Use a configurable user agent on proxies when requesting origins
 
 ## Licence
 
