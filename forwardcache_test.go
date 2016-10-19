@@ -67,35 +67,26 @@ func TestPool(t *testing.T) {
 
 func TestPoolHeaders(t *testing.T) {
 	var got string
+	want := "ForwardCacheBot/1.0"
+
 	proxied := origin.Config.Handler
 	origin.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		got = req.UserAgent()
 		proxied.ServeHTTP(w, req)
 	})
 
-	tests := []struct {
-		ua    string
-		proxy *httptest.Server
-	}{
-		{"ForwardCacheBot/1.0", localProxy},
-		{"ForwardCacheBot/2.0", peerProxy},
-	}
+	req, _ := http.NewRequest("GET", origin.URL+"/small.js", nil)
+	req.Header.Add("User-Agent", want)
+	pool.Client().Do(req)
 
-	for _, test := range tests {
-		req, _ := http.NewRequest("GET", origin.URL+"/small.js", nil)
-		req.Header.Add("User-Agent", test.ua)
-		pool.Set(test.proxy.URL)
-		pool.Client().Do(req)
-		if got != test.ua {
-			t.Errorf("invalid header sent to origin: got 'User-Agent: %s', want 'User-Agent: %s'", got, test.ua)
-		}
+	if got != want {
+		t.Errorf("invalid header sent to origin: got 'User-Agent: %s', want 'User-Agent: %s'", got, want)
 	}
 
 	origin.Config.Handler = proxied
-	pool.Set(localProxy.URL, peerProxy.URL)
 }
 
-func ExamplePool() {
+func ExampleNewPool() {
 	pool := NewPool("http://10.0.1.1:3000", httpcache.NewMemoryCache())
 	pool.Set("http://10.0.1.1:3000", "http://10.0.1.2:3000", "http://10.0.1.3:3000")
 
@@ -119,13 +110,32 @@ func ExamplePool() {
 	http.ListenAndServe(":3000", pool.LocalProxy())
 }
 
+func ExampleNewClient() {
+	pool := NewClient("http://10.0.1.1:3000", "http://10.0.1.2:3000", "http://10.0.1.3:3000")
+
+	// -then-
+
+	http.DefaultTransport = pool
+	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+
+	// -or-
+
+	http.DefaultClient = pool.Client()
+	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+
+	// -or-
+
+	c := pool.Client()
+	c.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+}
+
 func setup() {
 	// create an origin server and a pool with 2 members
 	origin = httptest.NewServer(http.FileServer(http.Dir("./test")))
 	cache := httpcache.NewMemoryCache()
 	localProxy = httptest.NewServer(nil)
 	peerProxy = httptest.NewServer(nil)
-	pool = NewPoolOpts(localProxy.URL, cache, &PoolOptions{
+	pool = NewPoolOpts(localProxy.URL, cache, &ClientOptions{
 		Path:     "/fwp",
 		Replicas: 100,
 		HashFn:   crc32.ChecksumIEEE,
