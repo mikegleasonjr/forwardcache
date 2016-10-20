@@ -33,6 +33,7 @@ limitations under the License.
 package forwardcache
 
 import (
+	"hash/crc32"
 	"net/http"
 	"net/url"
 	"sync"
@@ -46,42 +47,30 @@ const (
 	defaultReplicas = 50
 )
 
-var original http.RoundTripper
-
-func init() {
-	original = http.DefaultTransport
-}
-
 // Pool represents all caching proxies spread over 1 or more machines. It
 // also acts as a participating peer.
 type Pool struct {
-	*PoolClient
-	self  string
-	local *proxy
+	*Client
+	self      string
+	local     *proxy
+	transport http.RoundTripper
 }
 
 // NewPool creates a Pool and registers itself using the specified cache.
 // The returned *Pool implements http.Handler and must be registered
 // manually using http.Handle to serve the local proxy. See LocalProxy()
-func NewPool(self string, local httpcache.Cache) *Pool {
-	p := &Pool{
-		self:       self,
-		local:      newProxy(defaultPath, local),
-		PoolClient: NewClient(),
+func NewPool(self string, local httpcache.Cache, options ...func(*Pool)) *Pool {
+	p := &Pool{self: self}
+	for _, option := range options {
+		option(p)
 	}
-	return p
-}
-
-// NewPoolOpts initializes a pool of peers with the given options.
-func NewPoolOpts(self string, local httpcache.Cache, opts *ClientOptions) *Pool {
-	p := &Pool{
-		self:       self,
-		local:      newProxy(defaultPath, local),
-		PoolClient: NewClientOpts(opts),
+	if p.transport == nil {
+		p.transport = http.DefaultTransport
 	}
-	if opts.Path != "" {
-		p.local.path = opts.Path
+	if p.Client == nil {
+		p.Client = NewClient()
 	}
+	p.local = newProxy(p.path, local, p.transport)
 	return p
 }
 
@@ -91,71 +80,60 @@ func (p *Pool) LocalProxy() http.Handler {
 	return p.local
 }
 
-// PoolClient represents a nonparticipating client in the pool. It can
+// WithProxyTransport lets you configure a custom
+// transport used between the local proxy and the origins.
+// Defaults to http.DefaultTransport.
+func WithProxyTransport(t http.RoundTripper) func(*Pool) {
+	return func(p *Pool) {
+		p.transport = t
+	}
+}
+
+// WithClient lets you configure a custom pool client.
+// Defaults to NewClient().
+func WithClient(c *Client) func(*Pool) {
+	return func(p *Pool) {
+		p.Client = c
+	}
+}
+
+// Client represents a nonparticipating client in the pool. It can
 // issue requests to the pool but not proxy requests for others.
-type PoolClient struct {
-	opts  ClientOptions
-	mu    sync.RWMutex // guards peers
-	peers *consistenthash.Map
+type Client struct {
+	path      string
+	replicas  int
+	hashFn    consistenthash.Hash
+	transport http.RoundTripper
+	mu        sync.RWMutex // guards peers
+	peers     *consistenthash.Map
 }
 
-// ClientOptions are the configurations of a PoolClient. Options must be
-// the same on all machines to ensure consistent hashing among peers.
-type ClientOptions struct {
-	// Path specifies the HTTP path that will serve proxy requests.
-	// If blank, it defaults to "/proxy".
-	Path string
-
-	// Replicas specifies the number of key replicas on the consistent hash.
-	// If blank, it defaults to 50.
-	Replicas int
-
-	// HashFn specifies the hash function of the consistent hash.
-	// If blank, it defaults to crc32.ChecksumIEEE.
-	HashFn consistenthash.Hash
-}
-
-// NewClient creates a PoolClient.
-func NewClient(peers ...string) *PoolClient {
-	c := &PoolClient{
-		opts: ClientOptions{
-			Path:     defaultPath,
-			Replicas: defaultReplicas,
-		},
+// NewClient creates a Client.
+func NewClient(options ...func(*Client)) *Client {
+	c := &Client{
+		path:      defaultPath,
+		replicas:  defaultReplicas,
+		hashFn:    crc32.ChecksumIEEE,
+		transport: http.DefaultTransport,
 	}
-	if len(peers) > 0 {
-		c.Set(peers...)
-	}
-	return c
-}
-
-// NewClientOpts initializes a PoolClient with the given options.
-func NewClientOpts(opts *ClientOptions, peers ...string) *PoolClient {
-	c := NewClient(peers...)
-	if opts.HashFn != nil {
-		c.opts.HashFn = opts.HashFn
-	}
-	if opts.Path != "" {
-		c.opts.Path = opts.Path
-	}
-	if opts.Replicas != 0 {
-		c.opts.Replicas = opts.Replicas
+	for _, option := range options {
+		option(c)
 	}
 	return c
 }
 
 // Set updates the pool's list of peers. Each peer value should
 // be a valid base URL, for example "http://example.net:8000".
-func (c *PoolClient) Set(peers ...string) {
+func (c *Client) Set(peers ...string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.peers = consistenthash.New(c.opts.Replicas, c.opts.HashFn)
+	c.peers = consistenthash.New(c.replicas, c.hashFn)
 	c.peers.Add(peers...)
 }
 
-// Client returns an http.Client that uses the pool as its transport.
-func (c *PoolClient) Client() *http.Client {
+// HTTPClient returns an http.Client that uses the pool as its transport.
+func (c *Client) HTTPClient() *http.Client {
 	cl := new(http.Client)
 	*cl = *http.DefaultClient
 	cl.Transport = c
@@ -163,19 +141,52 @@ func (c *PoolClient) Client() *http.Client {
 }
 
 // RoundTrip makes the request go through one of the proxy. If the local
-// proxy is targetted, it uses the local transport directly. Since PoolClient
+// proxy is targetted, it uses the local transport directly. Since Client
 // implements the Roundtripper interface, it can be used as a transport.
-func (c *PoolClient) RoundTrip(req *http.Request) (*http.Response, error) {
+func (c *Client) RoundTrip(req *http.Request) (*http.Response, error) {
 	c.mu.RLock()
 	peer := c.peers.Get(req.URL.String())
 	c.mu.RUnlock()
 
 	cpy := clone(req) // per RoundTripper contract
-	query := proxyHandlerURL(peer, c.opts.Path, cpy.URL.String())
+	query := proxyHandlerURL(peer, c.path, cpy.URL.String())
 	cpy.URL = query
 	cpy.Host = query.Host
 
-	return original.RoundTrip(cpy)
+	return c.transport.RoundTrip(cpy)
+}
+
+// WithPath specifies the HTTP path that will serve proxy requests.
+// Defaults to "/proxy".
+func WithPath(p string) func(*Client) {
+	return func(c *Client) {
+		c.path = p
+	}
+}
+
+// WithReplicas specifies the number of key replicas on the consistent hash.
+// Defaults to 50.
+func WithReplicas(r int) func(*Client) {
+	return func(c *Client) {
+		c.replicas = r
+	}
+}
+
+// WithHashFn specifies the hash function of the consistent hash.
+// Defaults to crc32.ChecksumIEEE.
+func WithHashFn(h consistenthash.Hash) func(*Client) {
+	return func(c *Client) {
+		c.hashFn = h
+	}
+}
+
+// WithClientTransport lets you configure a custom transport
+// used between the local client and the proxies.
+// Defaults to http.DefaultTransport.
+func WithClientTransport(t http.RoundTripper) func(*Client) {
+	return func(c *Client) {
+		c.transport = t
+	}
 }
 
 // builds the url that handles proxy requests on the selected peer
