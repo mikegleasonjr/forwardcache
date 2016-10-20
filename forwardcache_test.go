@@ -51,7 +51,7 @@ func TestPool(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		res, _ := pool.Client().Get(test.origin)
+		res, _ := pool.HTTPClient().Get(test.origin)
 		res.Body.Close()
 
 		cached := res.Header.Get("X-From-Cache") == "1"
@@ -77,7 +77,7 @@ func TestPoolHeaders(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", origin.URL+"/small.js", nil)
 	req.Header.Add("User-Agent", want)
-	pool.Client().Do(req)
+	pool.HTTPClient().Do(req)
 
 	if got != want {
 		t.Errorf("invalid header sent to origin: got 'User-Agent: %s', want 'User-Agent: %s'", got, want)
@@ -88,22 +88,22 @@ func TestPoolHeaders(t *testing.T) {
 
 func ExampleNewPool() {
 	pool := NewPool("http://10.0.1.1:3000", httpcache.NewMemoryCache())
-	pool.Set("http://10.0.1.1:3000", "http://10.0.1.2:3000", "http://10.0.1.3:3000")
+	pool.Set("http://10.0.1.1:3000", "http://10.0.1.2:3000")
 
 	// -then-
 
 	http.DefaultTransport = pool
-	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+	http.Get("https://...js/1.5.7/angular.min.js")
 
 	// -or-
 
-	http.DefaultClient = pool.Client()
-	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+	http.DefaultClient = pool.HTTPClient()
+	http.Get("https://...js/1.5.7/angular.min.js")
 
 	// -or-
 
-	c := pool.Client()
-	c.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+	c := pool.HTTPClient()
+	c.Get("https://...js/1.5.7/angular.min.js")
 
 	// ...
 
@@ -111,22 +111,23 @@ func ExampleNewPool() {
 }
 
 func ExampleNewClient() {
-	pool := NewClient("http://10.0.1.1:3000", "http://10.0.1.2:3000", "http://10.0.1.3:3000")
+	pool := NewClient()
+	pool.Set("http://10.0.1.1:3000", "http://10.0.1.2:3000")
 
 	// -then-
 
 	http.DefaultTransport = pool
-	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+	http.Get("https://...js/1.5.7/angular.min.js")
 
 	// -or-
 
-	http.DefaultClient = pool.Client()
-	http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+	http.DefaultClient = pool.HTTPClient()
+	http.Get("https://...js/1.5.7/angular.min.js")
 
 	// -or-
 
-	c := pool.Client()
-	c.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+	c := pool.HTTPClient()
+	c.Get("https://...js/1.5.7/angular.min.js")
 }
 
 func setup() {
@@ -135,14 +136,11 @@ func setup() {
 	cache := httpcache.NewMemoryCache()
 	localProxy = httptest.NewServer(nil)
 	peerProxy = httptest.NewServer(nil)
-	pool = NewPoolOpts(localProxy.URL, cache, &ClientOptions{
-		Path:     "/fwp",
-		Replicas: 100,
-		HashFn:   crc32.ChecksumIEEE,
-	})
+	client := NewClient(WithPath("/fwp"), WithReplicas(100), WithHashFn(crc32.ChecksumIEEE), WithClientTransport(http.DefaultTransport))
+	pool = NewPool(localProxy.URL, cache, WithClient(client), WithProxyTransport(http.DefaultTransport))
 	pool.Set(localProxy.URL, peerProxy.URL)
 	localProxy.Config.Handler = pool.LocalProxy()
-	peerProxy.Config.Handler = newProxy("/fwp", cache)
+	peerProxy.Config.Handler = newProxy("/fwp", cache, http.DefaultTransport)
 }
 
 func teardown() {

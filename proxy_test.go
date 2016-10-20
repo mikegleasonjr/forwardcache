@@ -44,7 +44,7 @@ func TestProxy(t *testing.T) {
 	}
 
 	cache := httpcache.NewMemoryCache()
-	handler := newProxy("/proxy", cache)
+	handler := newProxy("/proxy", cache, http.DefaultTransport)
 
 	for _, test := range tests {
 		rr := httptest.NewRecorder()
@@ -65,7 +65,7 @@ func BenchmarkProxy(b *testing.B) {
 	b.ReportAllocs()
 
 	cache := httpcache.NewMemoryCache()
-	handler := newProxy("/proxy", cache)
+	handler := newProxy("/proxy", cache, http.DefaultTransport)
 	discard := discarder{}
 	req, err := http.NewRequest("GET", "/proxy?q="+url.QueryEscape(origin.URL+"/jquery-3.1.1.js"), nil)
 
