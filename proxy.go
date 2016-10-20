@@ -41,18 +41,16 @@ type proxy struct {
 // specified cache. The proxy handles requests of format:
 // /path?q=originUrl where originUrl is the resource being
 // requested by the client.
-func newProxy(path string, cache httpcache.Cache) *proxy {
-	transport := &httpcache.Transport{
-		Cache:               cache,
-		MarkCachedResponses: true,
-		Transport:           original,
-	}
-
+func newProxy(path string, cache httpcache.Cache, transport http.RoundTripper) *proxy {
 	return &proxy{
 		path: path,
 		ReverseProxy: &httputil.ReverseProxy{
-			Transport: transport,
-			Director:  director,
+			Transport: &httpcache.Transport{
+				Cache:               cache,
+				MarkCachedResponses: true,
+				Transport:           transport,
+			},
+			Director: director,
 		},
 	}
 }
