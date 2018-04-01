@@ -18,6 +18,8 @@ package forwardcache
 
 import (
 	"hash/crc32"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,6 +47,7 @@ func TestPool(t *testing.T) {
 		cached bool
 	}{
 		{origin.URL + "/jquery-3.1.1.js?buster=123", http.StatusOK, false},
+		{origin.URL + "/jquery-3.1.1.js?buster=456", http.StatusOK, false},
 		{origin.URL + "/jquery-3.1.1.js?buster=123", http.StatusOK, true},
 		{origin.URL + "/no-found", http.StatusNotFound, false},
 		{origin.URL + "/no-found", http.StatusNotFound, false},
@@ -52,9 +55,10 @@ func TestPool(t *testing.T) {
 
 	for _, test := range tests {
 		res, _ := pool.HTTPClient().Get(test.origin)
+		io.Copy(ioutil.Discard, res.Body)
 		res.Body.Close()
 
-		cached := res.Header.Get("X-From-Cache") == "1"
+		cached := res.Header.Get(httpcache.XFromCache) == "1"
 		if cached != test.cached {
 			t.Errorf("expected a different cache hit for %s: got %t, want %t", test.origin, cached, test.cached)
 		}
