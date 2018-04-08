@@ -1,5 +1,5 @@
 /*
-Copyright 2016 Mike Gleason jr Couturier.
+Copyright 2018 Mike Gleason jr Couturier.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ package forwardcache
 import (
 	"hash/crc32"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"sync"
 
@@ -54,6 +55,7 @@ type Pool struct {
 	self      string
 	local     *proxy
 	transport http.RoundTripper
+	buffers   httputil.BufferPool
 }
 
 // NewPool creates a Pool and registers itself using the specified cache.
@@ -70,7 +72,7 @@ func NewPool(self string, local httpcache.Cache, options ...func(*Pool)) *Pool {
 	if p.Client == nil {
 		p.Client = NewClient()
 	}
-	p.local = newProxy(p.path, local, p.transport)
+	p.local = newProxy(p.path, local, p.transport, p.buffers)
 	return p
 }
 
@@ -94,6 +96,22 @@ func WithProxyTransport(t http.RoundTripper) func(*Pool) {
 func WithClient(c *Client) func(*Pool) {
 	return func(p *Pool) {
 		p.Client = c
+	}
+}
+
+// WithBufferPool lets you configure a custom buffer pool.
+// Defaults to not using a buffer pool.
+func WithBufferPool(b httputil.BufferPool) func(*Pool) {
+	return func(p *Pool) {
+		p.buffers = b
+	}
+}
+
+// WithDefaultBufferPool lets you use the default 32k buffer pool.
+// Defaults to not using a buffer pool.
+func WithDefaultBufferPool(b httputil.BufferPool) func(*Pool) {
+	return func(p *Pool) {
+		p.buffers = DefaultBufferPool
 	}
 }
 

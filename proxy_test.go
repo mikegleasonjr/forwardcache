@@ -1,5 +1,5 @@
 /*
-Copyright 2016 Mike Gleason jr Couturier.
+Copyright 2018 Mike Gleason jr Couturier.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,62 +17,89 @@ limitations under the License.
 package forwardcache
 
 import (
+	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gregjones/httpcache"
 )
 
 func TestProxy(t *testing.T) {
-	var origin = func(path string) string {
-		return url.QueryEscape(origin.URL + path)
-	}
+	okRoundTrip := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		res := okResponse()
+		res.Header.Set("X-Url", req.URL.String())
+		return res, nil
+	})
+	origin := newRoundTripperMock().
+		add("GET", "http://cdn.com/jquery.js", okRoundTrip).
+		add("POST", "http://cdn.com/jquery.js", okRoundTrip)
 
-	tests := []struct {
-		method string
-		req    string
-		status int
-		body   string
+	proxy := newProxy("/p", httpcache.NewMemoryCache(), origin, DefaultBufferPool)
+
+	testCases := []struct {
+		method     string
+		path       string
+		status     int
+		body       string
+		xFromCache string
+		xURL       string
 	}{
-		{"GET", "/p", http.StatusBadGateway, ""},
-		{"GET", "/proxy?url=" + origin("/small.js"), http.StatusBadGateway, ""},
-		{"GET", "/proxy?q=" + origin("/small.js"), http.StatusOK, "console.log('test');"},
-		{"GET", "/proxy?q=" + origin("/unknown.html"), http.StatusNotFound, "404 page not found\n"},
-		{"GET", "/proxy?q=" + "%25", http.StatusBadGateway, ""},
+		{"GET", "/another", http.StatusBadGateway, "", "", ""},
+		{"GET", "/p?q=", http.StatusBadGateway, "", "", ""},
+		{"GET", "/p?q=" + url.QueryEscape("h!tp://w.com/"), http.StatusBadGateway, "", "", ""},
+		{"GET", "/p?q=" + url.QueryEscape("http://cdn.com/jquery.js"), http.StatusOK, "OK", "", "http://cdn.com/jquery.js"},
+		{"GET", "/p?q=" + url.QueryEscape("http://cdn.com/jquery.js"), http.StatusOK, "OK", "1", "http://cdn.com/jquery.js"},
+		{"POST", "/p?q=" + url.QueryEscape("http://cdn.com/jquery.js"), http.StatusOK, "OK", "", "http://cdn.com/jquery.js"},
+		{"POST", "/p?q=" + url.QueryEscape("http://cdn.com/jquery.js"), http.StatusOK, "OK", "", "http://cdn.com/jquery.js"},
+		{"GET", "/p?q=" + url.QueryEscape("http://cdn.com/bootstrap.js"), http.StatusNotFound, "Not Found", "", ""},
+		{"GET", "/p?q=" + url.QueryEscape("http://cdn.com/bootstrap.js"), http.StatusNotFound, "Not Found", "", ""},
 	}
+	for _, tC := range testCases {
+		path, _ := url.QueryUnescape(tC.path)
+		t.Run(tC.method+path, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req, _ := http.NewRequest(tC.method, tC.path, nil)
+			proxy.ServeHTTP(rr, req)
 
-	cache := httpcache.NewMemoryCache()
-	handler := newProxy("/proxy", cache, http.DefaultTransport)
+			if rr.Code != tC.status {
+				t.Errorf("proxy sent wrong status: got %d, want %d", rr.Code, tC.status)
+			}
 
-	for _, test := range tests {
-		rr := httptest.NewRecorder()
-		req, _ := http.NewRequest(test.method, test.req, nil)
-		handler.ServeHTTP(rr, req)
+			if body := rr.Body.String(); body != tC.body {
+				t.Errorf("proxy returned unexpected body: got %s want %s", body, tC.body)
+			}
 
-		if rr.Code != test.status {
-			t.Errorf("proxy sent wrong status: got %d want %d", rr.Code, test.status)
-		}
+			if xFromCache := rr.HeaderMap.Get(httpcache.XFromCache); xFromCache != tC.xFromCache {
+				t.Errorf("unexpected %q header: got %q, want %q", httpcache.XFromCache, xFromCache, tC.xFromCache)
+			}
 
-		if rr.Body.String() != test.body {
-			t.Errorf("proxy returned unexpected body: got %s want %s", rr.Body.String(), test.body)
-		}
+			if xURL := rr.HeaderMap.Get("X-Url"); xURL != tC.xURL {
+				t.Errorf("unexpected X-Url header: got %q, want %q", xURL, tC.xURL)
+			}
+		})
 	}
 }
 
 func BenchmarkProxy(b *testing.B) {
 	b.ReportAllocs()
 
-	cache := httpcache.NewMemoryCache()
-	handler := newProxy("/proxy", cache, http.DefaultTransport)
-	discard := discarder{}
-	req, err := http.NewRequest("GET", "/proxy?q="+url.QueryEscape(origin.URL+"/jquery-3.1.1.js"), nil)
+	body := strings.NewReader("OK")
+	res := okResponse()
+	origin := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		body.Seek(0, io.SeekStart)
+		res.Body = ioutil.NopCloser(body)
+		res.Request = req
+		return res, nil
+	})
 
-	if err != nil {
-		b.Error(err)
-		return
-	}
+	handler := newProxy("/proxy", &noopCache{}, origin, DefaultBufferPool)
+	discard := &discarder{}
+	req, _ := http.NewRequest("GET", "/proxy?q="+url.QueryEscape("http://cdn.com/jquery.js"), nil)
 
 	for i := 0; i < b.N; i++ {
 		handler.ServeHTTP(discard, req)
@@ -81,8 +108,56 @@ func BenchmarkProxy(b *testing.B) {
 
 type discarder struct{}
 
-var header = make(map[string][]string)
+func (*discarder) Header() http.Header         { return make(http.Header) }
+func (*discarder) Write(b []byte) (int, error) { return len(b), nil }
+func (*discarder) WriteHeader(int)             {}
 
-func (discarder) Header() http.Header         { return header }
-func (discarder) Write(b []byte) (int, error) { return len(b), nil }
-func (discarder) WriteHeader(int)             {}
+type noopCache struct{}
+
+func (c *noopCache) Set(key string, resp []byte)   {}
+func (c *noopCache) Delete(key string)             {}
+func (c *noopCache) Get(key string) ([]byte, bool) { return nil, false }
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (rt roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return rt(req) }
+
+type roundTripperMock struct {
+	mocks map[string]roundTripperFunc
+}
+
+func newRoundTripperMock() *roundTripperMock {
+	return &roundTripperMock{map[string]roundTripperFunc{}}
+}
+
+func (m *roundTripperMock) add(method, url string, f roundTripperFunc) *roundTripperMock {
+	m.mocks[method+" "+url] = f
+	return m
+}
+
+func (m *roundTripperMock) RoundTrip(req *http.Request) (*http.Response, error) {
+	if f, ok := m.mocks[req.Method+" "+req.URL.String()]; ok {
+		return f(req)
+	}
+
+	return &http.Response{
+		Status:        "404 Not Found",
+		StatusCode:    http.StatusNotFound,
+		Header:        make(http.Header),
+		Body:          ioutil.NopCloser(strings.NewReader("Not Found")),
+		ContentLength: 9,
+		Request:       req,
+	}, nil
+}
+
+func okResponse() *http.Response {
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Body:          ioutil.NopCloser(strings.NewReader("OK")),
+		ContentLength: 2,
+		Header: map[string][]string{
+			"date":    []string{time.Now().Format(time.RFC1123)},
+			"Expires": []string{time.Now().Add(time.Hour).Format(time.RFC1123)},
+		},
+	}
+}

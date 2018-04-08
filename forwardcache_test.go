@@ -1,5 +1,5 @@
 /*
-Copyright 2016 Mike Gleason jr Couturier.
+Copyright 2018 Mike Gleason jr Couturier.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -144,7 +144,7 @@ func setup() {
 	pool = NewPool(localProxy.URL, cache, WithClient(client), WithProxyTransport(http.DefaultTransport))
 	pool.Set(localProxy.URL, peerProxy.URL)
 	localProxy.Config.Handler = pool.LocalProxy()
-	peerProxy.Config.Handler = newProxy("/fwp", cache, http.DefaultTransport)
+	peerProxy.Config.Handler = newProxy("/fwp", cache, http.DefaultTransport, nil)
 }
 
 func teardown() {

@@ -1,5 +1,5 @@
 /*
-Copyright 2016 Mike Gleason jr Couturier.
+Copyright 2018 Mike Gleason jr Couturier.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ type proxy struct {
 // specified cache. The proxy handles requests of format:
 // /path?q=originUrl where originUrl is the resource being
 // requested by the client.
-func newProxy(path string, cache httpcache.Cache, transport http.RoundTripper) *proxy {
+func newProxy(path string, cache httpcache.Cache, transport http.RoundTripper, buffers httputil.BufferPool) *proxy {
 	return &proxy{
 		path: path,
 		ReverseProxy: &httputil.ReverseProxy{
@@ -50,7 +50,8 @@ func newProxy(path string, cache httpcache.Cache, transport http.RoundTripper) *
 				MarkCachedResponses: true,
 				Transport:           transport,
 			},
-			Director: director,
+			Director:   director,
+			BufferPool: buffers,
 		},
 	}
 }
