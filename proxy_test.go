@@ -52,7 +52,7 @@ func TestProxy(t *testing.T) {
 	}{
 		{"GET", "/another", http.StatusBadGateway, "", "", ""},
 		{"GET", "/p?q=", http.StatusBadGateway, "", "", ""},
-		{"GET", "/p?q=" + url.QueryEscape("h!tp://w.com/"), http.StatusBadGateway, "", "", ""},
+		{"GET", "/p?q=" + url.QueryEscape("http://10.0.1.%31/"), http.StatusBadGateway, "", "", ""},
 		{"GET", "/p?q=" + url.QueryEscape("http://cdn.com/jquery.js"), http.StatusOK, "OK", "", "http://cdn.com/jquery.js"},
 		{"GET", "/p?q=" + url.QueryEscape("http://cdn.com/jquery.js"), http.StatusOK, "OK", "1", "http://cdn.com/jquery.js"},
 		{"POST", "/p?q=" + url.QueryEscape("http://cdn.com/jquery.js"), http.StatusOK, "OK", "", "http://cdn.com/jquery.js"},
