@@ -35,6 +35,7 @@ func TestProxy(t *testing.T) {
 		res.Header.Set("X-Url", req.URL.String())
 		return res, nil
 	})
+
 	origin := newRoundTripperMock().
 		add("GET", "http://cdn.com/jquery.js", okRoundTrip).
 		add("POST", "http://cdn.com/jquery.js", okRoundTrip)
@@ -86,8 +87,6 @@ func TestProxy(t *testing.T) {
 }
 
 func BenchmarkProxy(b *testing.B) {
-	b.ReportAllocs()
-
 	body := strings.NewReader("OK")
 	res := okResponse()
 	origin := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
@@ -101,6 +100,8 @@ func BenchmarkProxy(b *testing.B) {
 	discard := &discarder{}
 	req, _ := http.NewRequest("GET", "/proxy?q="+url.QueryEscape("http://cdn.com/jquery.js"), nil)
 
+	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		handler.ServeHTTP(discard, req)
 	}

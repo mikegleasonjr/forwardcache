@@ -7,6 +7,8 @@
 
 A distributed forward caching proxy for Go's http.Client using [httpcache][httpcache] and heavily inspired by [groupcache][groupcache]. Backed by a lot of existing cache [backends][backends] thanks to httpcache. A per host LRU algorithm is provided to optionally front any existing cache. Like groupcache, forwardcache "is a client library as well as a server. It connects to its own peers."
 
+In simple terms, it is a distributed cache for HEAD and GET requests. It follows the HTTP RFC so it will only cache cacheable responses (like browsers do).
+
 Docs on [godoc.org][godoc]
 
 <pre>
@@ -18,12 +20,12 @@ Docs on [godoc.org][godoc]
    ^       ^       ^           ^
    |       |       |           |
    |       |       |           |
++-----+ +-----+ +-----+     +-----+
+|cache| |cache| |cache|     |cache|
 +--+--+ +--+--+ +--+--+     +--+--+
 |     | |     | |     |     |     |
 |  1  +-+  2  +-+  3  +--|--+  N  |
 |     | |     | |     |     |     |
-+-----+ +-----+ +-----+     +-----+
-|cache| |cache| |cache|     |cache|
 +-----+ +-----+ +-----+     +-----+
 </pre>
 

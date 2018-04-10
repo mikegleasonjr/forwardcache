@@ -1,5 +1,11 @@
 ## Change Log
 
+v2.0.0 - 20/10/2016
+
+* Cleaner API
+* Performance improvements (`http.BufferPool`)
+* Faster tests (using mocked transports instead of http servers)
+
 v1.0.1 - 20/10/2016
 
 * Can now specify custom `http.Transport`s
