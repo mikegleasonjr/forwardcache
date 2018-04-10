@@ -53,27 +53,32 @@ When making a request through the pool...
 ## Example
 
 ```go
-pool := NewPool("http://10.0.1.1:3000", httpcache.NewMemoryCache())
-pool.Set("http://10.0.1.1:3000", "http://10.0.1.2:3000", "http://10.0.1.3:3000")
+peer := NewPeer("http://10.0.1.1:3000")
+peer.SetPool("http://10.0.1.1:3000", "http://10.0.1.2:3000")
+
+// -or-
+
+client := NewClient(WithPool("http://10.0.1.1:3000", "http://10.0.1.2:3000"))
+peer2 := NewPeer("http://10.0.1.1:3000", WithClient(client))
 
 // -then-
 
-http.DefaultTransport = pool
-http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+http.DefaultTransport = peer
+http.Get("https://...js/1.5.7/angular.min.js")
 
 // -or-
 
-http.DefaultClient = pool.Client()
-http.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+http.DefaultClient = peer.HTTPClient()
+http.Get("https://...js/1.5.7/angular.min.js")
 
 // -or-
 
-c := pool.Client()
-c.Get("https://ajax.g[...]js/1.5.7/angular.min.js")
+c := peer2.HTTPClient()
+c.Get("https://...js/1.5.7/angular.min.js")
 
 // ...
 
-http.ListenAndServe(":3000", pool.LocalProxy())
+http.ListenAndServe(":3000", peer.Handler())
 ```
 
 ## Licence
