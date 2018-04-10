@@ -82,7 +82,7 @@ func ExampleNewPeer() {
 	// -or-
 
 	client := NewClient(WithPool("http://10.0.1.1:3000", "http://10.0.1.2:3000"))
-	peer2 := NewPeer("http://10.0.1.1:3000", WithClient(client))
+	peer = NewPeer("http://10.0.1.1:3000", WithClient(client))
 
 	// -then-
 
@@ -96,7 +96,7 @@ func ExampleNewPeer() {
 
 	// -or-
 
-	c := peer2.HTTPClient()
+	c := peer.HTTPClient()
 	c.Get("https://...js/1.5.7/angular.min.js")
 
 	// ...
